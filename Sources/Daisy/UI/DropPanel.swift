@@ -65,11 +65,16 @@ final class DropPanel: NSPanel {
 
     func toggle() { isVisible ? orderOut(nil) : summon() }
 
-    /// Hotkey / menu summon. If files are on the clipboard it loads them;
-    /// otherwise it's an empty ring to drag a file onto.
+    /// Hotkey / menu summon. Always an empty ring.
+    ///
+    /// It used to load whatever file URL happened to be on the clipboard. That
+    /// reads as a bug rather than a shortcut: copying a file is how most people
+    /// get one into the wheel, so every summon after a conversion silently
+    /// re-presented the file just converted, and it looked like the wheel never
+    /// let go of it. Pasting is still one keystroke, it just has to be asked
+    /// for now.
     func summon() {
         centreOnScreen()
-        if let urls = Self.clipboardFiles() { hud.accept(urls) }
         present()
     }
 
@@ -163,12 +168,6 @@ final class DropPanel: NSPanel {
             return true
         }
         return image.cgImage(forProposedRect: nil, context: nil, hints: nil)
-    }
-
-    private static func clipboardFiles() -> [URL]? {
-        let urls = NSPasteboard.general.readObjects(forClasses: [NSURL.self],
-                   options: [.urlReadingFileURLsOnly: true]) as? [URL]
-        return (urls?.isEmpty ?? true) ? nil : urls
     }
 
     /// From the menu, Services, or a paste — an interactive open.
@@ -715,7 +714,7 @@ private final class WheelHUD: NSView {
             text("Drop files", at: CGPoint(x: center.x, y: center.y + 16), 14, .semibold, Theme.ink)
             text("or click to choose", at: CGPoint(x: center.x, y: center.y - 3),
                  11, .regular, Theme.inkFaint)
-            text("⌥ tools   ⇥ mode   esc", at: CGPoint(x: center.x, y: center.y - 30),
+            text("⌘V paste   ⌥ tools   ⇥ mode   esc", at: CGPoint(x: center.x, y: center.y - 30),
                  9, .regular, Theme.inkFaint, tracking: 0.3)
             drawCloseButton()
             return

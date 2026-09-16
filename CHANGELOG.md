@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.1
+
+- **Fixed: the wheel kept re-presenting the file you just converted.** Summoning
+  it loaded whatever file URL happened to be on the clipboard, and copying a
+  file is how most people get one in — so every summon after a conversion put
+  the same file straight back in the middle, and it looked like the wheel never
+  let go. The wheel now always opens empty. Pasting is still one keystroke, it
+  just has to be asked for, and the empty ring says so: **⌘V paste**.
+
 ## 0.8.0
 
 - **Fixed: Quit did nothing.** Every menu item was pointed at the app delegate,
