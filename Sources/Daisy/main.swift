@@ -90,6 +90,9 @@ if args.first == "--update-check" {
 
 // `--drag-probe` reports whether a global mouse-drag monitor gets events here.
 if args.first == "--drag-probe" {
+    // Unbuffered: the whole point is watching events arrive live, and a probe
+    // that is killed rather than exited loses a buffered log entirely.
+    setvbuf(stdout, nil, _IONBF, 0)
     app.setActivationPolicy(.prohibited)
     var count = 0
     _ = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { e in
