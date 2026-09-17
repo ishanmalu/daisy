@@ -186,6 +186,27 @@ enum SelfTest {
         expect(InputSet.expand([plain, photos]).files.count == 2, "a mixed multi-drop is left alone")
         try? fm.removeItem(at: root)
 
+        section("combine")
+        let cPng = Formats.byID["png"]!, cJpg = Formats.byID["jpg"]!
+        let cPdf = Formats.byID["pdf"]!, cMp3 = Formats.byID["mp3"]!
+        expect(Combine.offered(to: cPdf, from: [cPng, cJpg], count: 2),
+               "two images offer one-PDF or separate")
+        expect(Combine.offered(to: cPdf, from: [cPng, cPdf, cJpg], count: 3),
+               "images mixed with PDFs still combine")
+        expect(!Combine.offered(to: cPdf, from: [cPng], count: 1),
+               "a single file has nothing to decide")
+        expect(!Combine.offered(to: cPdf, from: [cPng, cMp3], count: 2),
+               "an audio file in the set rules out one PDF")
+        expect(!Combine.offered(to: cJpg, from: [cPng, cPng], count: 2),
+               "only formats that can hold several inputs ask")
+        expect(!Combine.offered(to: cPdf, from: [cPng], count: 2),
+               "a set with an unrecognised file never combines")
+        // Page order has to come from the names: a multi-file drop arrives in
+        // the source app's order, which for Finder is invisible selection order.
+        let mixed = ["img10.png", "img2.png", "img1.png"].map { URL(fileURLWithPath: "/tmp/\($0)") }
+        expect(Combine.ordered(mixed).map(\.lastPathComponent) == ["img1.png", "img2.png", "img10.png"],
+               "merge order is natural, so img2 precedes img10")
+
         section("updates")
         expect(Updater.isNewer("0.8.0", than: "0.7.1"), "0.8.0 is newer than 0.7.1")
         expect(Updater.isNewer("0.10.0", than: "0.9.0"), "0.10.0 is newer than 0.9.0 (numeric, not lexical)")

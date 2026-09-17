@@ -252,6 +252,9 @@ private final class WheelHUD: NSView {
     private var focus = 0
     private var hover: Int?
     private var presetParent: Tool?
+    /// Set while the wheel is asking whether to fold several inputs into one
+    /// file of this format, or convert each separately.
+    private var combineTarget: Format?
     /// Set when `inputs` came from expanding a dropped folder.
     private var folderInput: URL?
     /// Cursor is over the empty ring, which is one big button.
@@ -415,6 +418,7 @@ private final class WheelHUD: NSView {
         thumb = resolved.count == 1 ? Self.thumbnail(resolved[0], side: hubR * 2)
               : folder.flatMap { Self.thumbnail($0, side: hubR * 2) }
         presetParent = nil
+        combineTarget = nil
         running = false
         progress = 0
         rebuild()
@@ -446,6 +450,7 @@ private final class WheelHUD: NSView {
         thumb = nil
         items = []
         presetParent = nil
+        combineTarget = nil
         folderInput = nil
         hover = nil
         focus = 0
@@ -465,6 +470,7 @@ private final class WheelHUD: NSView {
         let order = Mode.allCases
         stickyMode = order[(order.firstIndex(of: stickyMode ?? .convert)! + 1) % order.count]
         presetParent = nil
+        combineTarget = nil
         rebuild()
     }
 
@@ -475,7 +481,7 @@ private final class WheelHUD: NSView {
         entrance.start()
         animate()
         switch mode {
-        case .convert: items = convertItems()
+        case .convert: items = combineTarget.map(combineItems) ?? convertItems()
         case .tools:   items = presetParent.map(presetItems) ?? toolItems()
         case .recipes: items = recipeItems()
         }
@@ -493,10 +499,50 @@ private final class WheelHUD: NSView {
         if folderInput != nil, let folder = Formats.byID["folder"] {
             shared.formUnion(Engine.targets(for: folder).map(\.id))
         }
+        // A format that can hold several inputs at once belongs on the wheel
+        // even when it is not a conversion route for them: PDF is never a
+        // target for a PDF, so without this a pile of PDFs could only be
+        // merged from under ⌥, which is not where anyone looks for it.
+        let convertible = shared
+        for f in Formats.list where !shared.contains(f.id) {
+            if Combine.offered(to: f, from: formats, count: inputs.count) { shared.insert(f.id) }
+        }
+
         return shared.compactMap { Formats.byID[$0] }
             .filter { $0.id != "folder" || inputs.allSatisfy { Formats.byURL($0)?.category == .archive } }
             .sorted { ($0.category.rawValue, $0.label) < ($1.category.rawValue, $1.label) }
-            .map { fmt in WheelItem(title: fmt.label, symbol: nil) { [weak self] in self?.runConvert(to: fmt) } }
+            .map { fmt in
+                WheelItem(title: fmt.label, symbol: nil) { [weak self] in
+                    guard let self else { return }
+                    guard Combine.offered(to: fmt, from: self.formats, count: self.inputs.count) else {
+                        self.runConvert(to: fmt)
+                        return
+                    }
+                    if convertible.contains(fmt.id) {
+                        // Both readings are real, so the wheel has to ask.
+                        self.combineTarget = fmt
+                        self.focus = 0
+                        self.rebuild()
+                    } else {
+                        // Combining is the only thing this could mean.
+                        self.runCombine(to: fmt)
+                    }
+                }
+            }
+    }
+
+    /// The two answers, as a sub-wheel. Same shape as a tool's presets, and
+    /// esc backs out of it the same way.
+    private func combineItems(_ target: Format) -> [WheelItem] {
+        [
+            WheelItem(title: "ONE\n\(target.label)", symbol: "doc.on.doc") { [weak self] in
+                self?.runCombine(to: target)
+            },
+            WheelItem(title: "SEPARATE", symbol: "square.grid.2x2") { [weak self] in
+                self?.combineTarget = nil
+                self?.runConvert(to: target)
+            },
+        ]
     }
 
     private func toolItems() -> [WheelItem] {
@@ -551,6 +597,18 @@ private final class WheelHUD: NSView {
                 report(i + 1)
             }
             return (first, "\(files.count) → \(target.label)")
+        }
+    }
+
+    /// One file out of many. Deliberately the same call the ⌥ Merge PDF tool
+    /// makes, so both routes produce identical output and identical naming.
+    private func runCombine(to target: Format) {
+        let files = Combine.ordered(inputs)
+        combineTarget = nil
+        run(count: 1) { report in
+            let outs = try ToolRunner.run(.pdfMerge, inputs: files, params: ToolRunner.Params(preset: nil))
+            report(1)
+            return (outs.first, "\(files.count) → one \(target.label)")
         }
     }
 
@@ -981,12 +1039,15 @@ private final class WheelHUD: NSView {
         } else {
             text(sourceLabel(), at: CGPoint(x: center.x, y: center.y + 4), 12, .semibold, Theme.onAccent)
         }
-        // Nothing else says which mode you're in, and the petals alone are ambiguous.
-        if mode != .convert {
-            let name = mode == .tools ? "TOOLS" : "RECIPES"
+        // Nothing else says which mode you're in, and the petals alone are
+        // ambiguous. The combine question borrows the same slot to name the
+        // format it is asking about — "SEPARATE" on its own says nothing.
+        let banner = combineTarget.map { $0.label.uppercased() }
+            ?? (mode == .convert ? nil : (mode == .tools ? "TOOLS" : "RECIPES"))
+        if let banner {
             let colour = thumb == nil ? Theme.onAccent.withAlphaComponent(0.62)
                                       : Theme.paper.withAlphaComponent(0.85)
-            text(name, at: CGPoint(x: center.x, y: center.y + hubR - 13), 8.5, .semibold,
+            text(banner, at: CGPoint(x: center.x, y: center.y + hubR - 13), 8.5, .semibold,
                  colour, tracking: 1)
         }
         // Same bevel as the disc, at hub scale.
@@ -1137,7 +1198,11 @@ private final class WheelHUD: NSView {
     override func keyDown(with e: NSEvent) {
         switch e.keyCode {
         case 53:                                 // esc
-            if presetParent != nil { presetParent = nil; rebuild() } else { owner?.dismiss() }
+            if presetParent != nil || combineTarget != nil {
+                presetParent = nil
+                combineTarget = nil
+                rebuild()
+            } else { owner?.dismiss() }
         case 123, 126: step(-1)                   // ← ↑
         case 124, 125: step(+1)                   // → ↓
         case 36, 76, 49:                         // return, space
@@ -1165,6 +1230,7 @@ private final class WheelHUD: NSView {
         if held != optionHeld {
             optionHeld = held
             presetParent = nil
+            combineTarget = nil
             rebuild()
         }
         super.flagsChanged(with: e)

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.9.0
+
+- **Several files into one PDF.** Drop three photos, pick PDF, and Daisy now
+  asks what you meant: **one PDF** of three pages, or **three separate PDFs**.
+  It always quietly assumed the second; combining existed only under ⌥ as Merge
+  PDF, which is not where anyone looks for it. Any number of files — 40 photos
+  into a 40-page PDF works the same way.
+- Pages come out in **filename order** (`img2` before `img10`). A multi-file
+  drop arrives in whatever order the source app hands over, which for Finder is
+  selection order — invisible and not something you can control.
+- It only asks when both readings are real. One file never asks. A set that can
+  *only* be combined — a pile of PDFs, or images mixed with PDFs, where
+  PDF→PDF is not a conversion — merges straight away. And PDF now appears on
+  the wheel for those sets at all, which it previously could not, since it was
+  never a conversion route for them.
+- Merging goes through the same code the ⌥ Merge PDF tool uses, so both routes
+  produce identical output and identical naming.
+
 ## 0.8.1
 
 - **Fixed: the wheel kept re-presenting the file you just converted.** Summoning

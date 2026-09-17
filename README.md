@@ -114,6 +114,12 @@ dead centre. Drop on a petal, or arrow to one and press ↵. With nothing loaded
 the ring is a button: click it (⌘O, or the menu bar's **Convert File…**) and
 Finder's picker opens.
 
+Drop **several files** and pick a format that can hold all of them — PDF —
+and Daisy asks which you meant: **one PDF** of N pages, or **N separate PDFs**.
+Pages come out in filename order, because a multi-file drop arrives in whatever
+order the source app hands over. A single file never asks, and a set that can
+only be combined (a pile of PDFs) merges without asking.
+
 Drop a **folder** and you get both readings of it — every convertible file
 inside becomes a batch, and the folder's own archive targets stay on the wheel.
 So a folder of 40 photos is one click to WebP, or one click to ZIP.
