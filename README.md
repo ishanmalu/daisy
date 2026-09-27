@@ -8,7 +8,7 @@ Named for what it looks like: white petals around a yellow centre. The file
 sits in the middle, every format it can become fans out around it.
 
 [**Download 0.3.1**](https://github.com/ishanmalu/daisy/releases/latest) ·
-[Site](https://ishanmalu.github.io/daisy/) · macOS 14+ · Universal · Free for noncommercial use
+[Site](https://daisy.ishanmalu.dev/) · macOS 14+ · Universal · Free for noncommercial use
 
 A menu-bar wheel and a `daisy` CLI over one conversion engine, with nine
 converters bundled inside the app so it runs on a machine with nothing
@@ -62,7 +62,7 @@ progress readout and auto-dismiss on success.
 
 ## Site
 
-[ishanmalu.github.io/daisy](https://ishanmalu.github.io/daisy/) — served from
+[daisy.ishanmalu.dev](https://daisy.ishanmalu.dev/) — served from
 `docs/`. The hero wheel is live SVG built from the same geometry the app draws.
 
 ## Build from source
