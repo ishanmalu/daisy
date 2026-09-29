@@ -59,8 +59,11 @@ struct MediaConverter: Converter {
                   "-preset", "medium", "-pix_fmt", "yuv420p",
                   "-c:a", "aac", "-b:a", "160k"]
         }
+        // yuv420p needs even dimensions, and screen recordings are often odd.
         if let w = opts.scaleWidth {
-            a += ["-vf", "scale=\(w):-2"]
+            a += ["-vf", "scale=\(max(2, w - w % 2)):-2"]
+        } else {
+            a += ["-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2"]
         }
         a += ["-movflags", "+faststart", output.path]
         return Invocation(engine: .ffmpeg, args: a)

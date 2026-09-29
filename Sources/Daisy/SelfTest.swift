@@ -86,6 +86,15 @@ enum SelfTest {
         expect(Naming.output(for: srcB, target: jpg, into: nil, collision: .skip) != nil, "skip returns a path when clear")
         expect(Naming.output(for: srcA, target: jpg, into: nil, collision: .overwrite)?.lastPathComponent == "photo.jpg",
                "overwrite reuses the existing name")
+        let ro = tmp.appendingPathComponent("ro", isDirectory: true)
+        try? FileManager.default.createDirectory(at: ro, withIntermediateDirectories: true)
+        let roSrc = ro.appendingPathComponent("locked.png")
+        FileManager.default.createFile(atPath: roSrc.path, contents: Data("x".utf8))
+        try? FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: ro.path)
+        expect(Naming.output(for: roSrc, target: jpg, into: nil, collision: .suffix)?
+               .deletingLastPathComponent().path == Naming.fallbackDir.path,
+               "read-only source folder falls back to Downloads")
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: ro.path)
 
         section("tools & trace")
         let pdf = Formats.byID["pdf"]!, svg = Formats.byID["svg"]!
@@ -103,6 +112,13 @@ enum SelfTest {
         expect(Naming.toolOutput(for: URL(fileURLWithPath: "/tmp/x/a.jpg"), tag: "resized", ext: "jpg", into: nil)?
                .lastPathComponent == "a-resized.jpg", "tool output name")
 
+        expect(!Tool.resize.applies(to: [svg], count: 1), "image tools skip svg (ImageIO can't decode it)")
+        if let png = Formats.byID["png"],
+           let inv = try? ImageConverter().plan(input: URL(fileURLWithPath: "/tmp/a.svg"), from: svg, to: png,
+                                                output: URL(fileURLWithPath: "/tmp/a.png"), opts: ConvertOptions()) {
+            expect(!inv.args.contains("-o") && inv.args.suffix(2) == ["/tmp/a.svg", "/tmp/a.png"],
+                   "resvg gets positional <in> <out>, no -o")
+        }
         expect(Engine.targets(for: jpg).contains(svg), "jpg -> svg (trace) offered")
         if let inv = try? ImageConverter().plan(input: URL(fileURLWithPath: "/tmp/a.jpg"), from: jpg, to: svg,
                                                 output: URL(fileURLWithPath: "/tmp/a.svg"), opts: ConvertOptions()) {

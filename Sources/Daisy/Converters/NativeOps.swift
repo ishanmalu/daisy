@@ -41,10 +41,20 @@ enum NativeOps {
     /// ImageIO conversion silently drops the capture date, camera and location.
     private static func writeCGImage(_ image: CGImage, to output: URL, id: String,
                                      quality: Int?, keep: [CFString: Any]? = nil) throws {
+        if id == "webp" {
+            try writeWebP(image, to: output, quality: quality, keep: keep)
+            return
+        }
         guard let type = utType(for: id),
               let dest = CGImageDestinationCreateWithURL(output as CFURL, type.identifier as CFString, 1, nil) else {
             throw ConvertError.badInput("The built-in encoder can't write \(id.uppercased()).")
         }
+        // JPEG and BMP have no alpha; handed a transparent PNG, ImageIO drops the
+        // channel and the see-through parts come out black. Flatten onto white.
+        let alpha = image.alphaInfo
+        let hasAlpha = ![.none, .noneSkipFirst, .noneSkipLast].contains(alpha)
+        let image = (hasAlpha && ["jpg", "bmp"].contains(id)) ? (flattened(image) ?? image) : image
+
         var props = keep ?? [:]
         // We always hand ImageIO upright pixels, and the stored dimensions would
         // be stale after a resize or crop.
@@ -58,6 +68,36 @@ enum NativeOps {
         guard CGImageDestinationFinalize(dest) else {
             throw ConvertError.badInput("Failed to write \(output.lastPathComponent)")
         }
+    }
+
+    /// ImageIO decodes WebP but can't encode it, so a resize or crop of a WebP
+    /// used to fail outright. Stage a PNG and hand it to cwebp.
+    private static func writeWebP(_ image: CGImage, to output: URL, quality: Int?,
+                                  keep: [CFString: Any]?) throws {
+        guard let bin = EngineLocator.path(for: .cwebp) else { throw ConvertError.engineMissing(.cwebp) }
+        let png = FileManager.default.temporaryDirectory
+            .appendingPathComponent("daisy-\(UUID().uuidString).png")
+        defer { try? FileManager.default.removeItem(at: png) }
+        try writeCGImage(image, to: png, id: "png", quality: nil, keep: keep)
+        var a = ["-quiet", "-q", String(quality ?? 82)]
+        if keep != nil { a += ["-metadata", "all"] }
+        let r = ProcessRun.run(bin, a + [png.path, "-o", output.path],
+                               env: Engine.bundledEngineEnv(bin), timeout: 300)
+        if r.code != 0 {
+            throw ConvertError.processFailed(code: r.code, message: String((r.stderr.isEmpty ? r.stdout : r.stderr).suffix(500)))
+        }
+    }
+
+    private static func flattened(_ image: CGImage) -> CGImage? {
+        let space = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(data: nil, width: image.width, height: image.height,
+                                  bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                                  bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
+        let r = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+        ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+        ctx.fill(r)
+        ctx.draw(image, in: r)
+        return ctx.makeImage()
     }
 
     /// The image with its EXIF rotation baked into the pixels, plus the source
@@ -105,7 +145,11 @@ enum NativeOps {
     }
 
     private static func redraw(_ image: CGImage, width w: Int, height h: Int) -> CGImage? {
-        let space = image.colorSpace ?? CGColorSpaceCreateDeviceRGB()
+        // An 8-bit premultiplied-alpha context only exists for RGB. Keeping a
+        // grey, CMYK or indexed source's own space made CGContext return nil,
+        // and every caller's `?? image` then skipped the resize silently.
+        let space = image.colorSpace.flatMap { $0.model == .rgb ? $0 : nil }
+            ?? CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
         guard w > 0, h > 0,
               let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8,
                                   bytesPerRow: 0, space: space,

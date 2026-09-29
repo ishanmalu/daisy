@@ -175,10 +175,18 @@ enum Engine {
         }
         defer { staged.map { try? FileManager.default.removeItem(at: $0) } }
 
-        let r = ProcessRun.run(bin, args, env: bundledEngineEnv(bin), timeout: 600)
+        // A launched app's working directory is /, which is read-only; an engine
+        // that writes anything relative should never land there.
+        let r = ProcessRun.run(bin, args, cwd: FileManager.default.temporaryDirectory,
+                               env: bundledEngineEnv(bin), timeout: 600)
         if r.code != 0 {
             let msg = r.stderr.isEmpty ? r.stdout : r.stderr
             throw ConvertError.processFailed(code: r.code, message: String(msg.suffix(600)))
+        }
+        // Exit 0 with nothing written is a failure, not a success — this is
+        // how a bad resvg invocation used to pass silently.
+        guard FileManager.default.fileExists(atPath: dest.path) else {
+            throw ConvertError.processFailed(code: 0, message: "\(plan.engine.rawValue) wrote no output")
         }
         return dest
     }

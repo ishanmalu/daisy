@@ -25,14 +25,14 @@ enum ToolRunner {
     static func run(_ tool: Tool, inputs: [URL], params: Params) throws -> [URL] {
         switch tool {
         case .pdfMerge:
-            let out = (params.into ?? inputs[0].deletingLastPathComponent())
+            let out = Naming.baseDir(for: inputs[0], into: params.into)
                 .appendingPathComponent("merged.pdf")
             let dest = Naming.toolOutput(for: out, tag: "", ext: "pdf", into: params.into) ?? out
             try NativeOps.pdfMerge(inputs, to: dest)
             return [dest]
 
         case .pdfSplit:
-            let base = params.into ?? inputs[0].deletingLastPathComponent()
+            let base = Naming.baseDir(for: inputs[0], into: params.into)
             let dir = base.appendingPathComponent("\(Naming.strippedStem(of: inputs[0])) pages", isDirectory: true)
             try NativeOps.pdfSplit(inputs[0], into: dir)
             return [dir]
@@ -143,10 +143,20 @@ enum ToolRunner {
         default:
             vf = "scale=iw:ih"
         }
-        a += ["-vf", vf, "-c:v", "libx264",
-              "-crf", String(crf(params.quality, base: tool == .compress ? 30 : 23)),
-              "-preset", "medium", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k",
-              "-movflags", "+faststart", output.path]
+        // yuv420p needs even dimensions; a 9:16 crop of 1080p is 607 wide and
+        // libx264 refuses it. Round every geometry down to even.
+        vf += ",scale=trunc(iw/2)*2:trunc(ih/2)*2"
+        let q = crf(params.quality, base: tool == .compress ? 30 : 23)
+        a += ["-vf", vf]
+        if output.pathExtension.lowercased() == "webm" {
+            // WebM only carries VP8/VP9/AV1 and Vorbis/Opus.
+            a += ["-c:v", "libvpx-vp9", "-b:v", "0", "-crf", String(q + 8),
+                  "-pix_fmt", "yuv420p", "-c:a", "libopus", "-b:a", "128k", output.path]
+        } else {
+            a += ["-c:v", "libx264", "-crf", String(q),
+                  "-preset", "medium", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k",
+                  "-movflags", "+faststart", output.path]
+        }
         try runFF(bin, a)
     }
 

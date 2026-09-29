@@ -53,6 +53,9 @@ enum Tool: String, CaseIterable {
     /// rest work per-file.
     func applies(to formats: [Format], count: Int) -> Bool {
         guard let first = formats.first else { return false }
+        // Every image tool decodes through ImageIO, which can't read SVG.
+        // Convert an SVG to a raster first.
+        if formats.contains(where: { $0.id == "svg" }) && self != .pdfMerge { return false }
         let cats = Set(formats.map(\.category))
         switch self {
         case .resize, .crop:

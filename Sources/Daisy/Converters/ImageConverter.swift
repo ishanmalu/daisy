@@ -21,11 +21,29 @@ struct ImageConverter: Converter {
         return ids.compactMap { Formats.byID[$0] }
     }
 
+    /// resvg only ever writes PNG — asked for `out.jpg` it wrote PNG bytes under
+    /// a JPEG name. Anything else goes SVG → temp PNG → target.
+    func execute(input: URL, from: Format, to: Format, output: URL, opts: ConvertOptions) throws -> Bool {
+        guard from.id == "svg", to.id != "png", let png = Formats.byID["png"] else { return false }
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("daisy-\(UUID().uuidString).png")
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        try Engine.run(input: input, to: png, output: tmp, opts: opts)
+        var rest = opts
+        rest.scale = nil   // already applied by resvg
+        try Engine.run(input: tmp, to: to, output: output, opts: rest)
+        return true
+    }
+
     func plan(input: URL, from: Format, to: Format, output: URL, opts: ConvertOptions) throws -> Invocation {
         if from.id == "svg" {
-            var a = [input.path, "-o", output.path]
+            // resvg takes `[options] <in> <out>` — there is no -o. Passing one
+            // made it write a file literally named "-o" into the working
+            // directory, which for the app is / (read-only), so every SVG
+            // conversion died with "Read-only file system".
+            var a: [String] = []
             if let w = opts.scaleWidth { a += ["--width", String(w)] }
-            return Invocation(engine: .resvg, args: a)
+            return Invocation(engine: .resvg, args: a + [input.path, output.path])
         }
 
         if to.id == "svg" {
@@ -62,6 +80,8 @@ struct ImageConverter: Converter {
             saveOpts.append("Q=\(q)")
         }
         if opts.stripMetadata { saveOpts.append("strip") }
+        // No alpha in these; without a background vips flattens onto black.
+        if ["jpg", "bmp"].contains(to.id) { saveOpts.append("background=255") }
         let outSpec = saveOpts.isEmpty ? output.path : "\(output.path)[\(saveOpts.joined(separator: ","))]"
 
         if let w = opts.scaleWidth {
