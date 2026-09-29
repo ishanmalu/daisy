@@ -409,7 +409,10 @@ enum NativeOps {
         let src = try loadCGImage(input)
         let handler = VNImageRequestHandler(cgImage: src, options: [:])
         let req = VNGenerateForegroundInstanceMaskRequest()
-        try handler.perform([req])
+        // Vision's failures here are raw model-compiler dumps (seen on very
+        // small images); nobody can act on those.
+        do { try handler.perform([req]) }
+        catch { throw ConvertError.badInput("Couldn't find a subject to cut out.") }
         guard let result = req.results?.first else {
             throw ConvertError.badInput("No clear subject to cut out.")
         }

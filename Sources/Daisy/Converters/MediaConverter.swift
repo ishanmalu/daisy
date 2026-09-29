@@ -40,7 +40,11 @@ struct MediaConverter: Converter {
             case "m4a", "aac": a += ["-c:a", "aac", "-b:a", "\(kbps(opts.quality, default: 192))k"]
             case "wav":  a += ["-c:a", "pcm_s16le"]
             case "flac": a += ["-c:a", "flac"]
-            case "ogg":  a += ["-c:a", "libvorbis", "-q:a", "5"]
+            case "ogg":
+                // Homebrew's ffmpeg dropped libvorbis. Opus in an Ogg
+                // container plays everywhere Vorbis does.
+                if Self.hasEncoder("libvorbis") { a += ["-c:a", "libvorbis", "-q:a", "5"] }
+                else { a += ["-c:a", "libopus", "-b:a", "\(kbps(opts.quality, default: 128))k"] }
             case "opus": a += ["-c:a", "libopus", "-b:a", "\(kbps(opts.quality, default: 128))k"]
             case "aiff": a += ["-c:a", "pcm_s16be"]
             default: break
@@ -67,6 +71,23 @@ struct MediaConverter: Converter {
         }
         a += ["-movflags", "+faststart", output.path]
         return Invocation(engine: .ffmpeg, args: a)
+    }
+
+    private static var encoders: Set<String>?
+    private static let encLock = NSLock()
+
+    /// The installed ffmpeg's encoder list, read once.
+    static func hasEncoder(_ name: String) -> Bool {
+        encLock.lock(); defer { encLock.unlock() }
+        if encoders == nil {
+            guard let bin = EngineLocator.path(for: .ffmpeg) else { return false }
+            let out = ProcessRun.run(bin, ["-hide_banner", "-encoders"], timeout: 15).stdout
+            encoders = Set(out.split(separator: "\n").compactMap { line in
+                let cols = line.split(separator: " ")
+                return cols.count >= 2 ? String(cols[1]) : nil
+            })
+        }
+        return encoders!.contains(name)
     }
 
     // quality 1...100 → codec-native knobs. nil == a sensible default.

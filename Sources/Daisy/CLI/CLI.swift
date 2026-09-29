@@ -200,7 +200,7 @@ enum CLI {
                 case "--to":      i += 1; rule.toFormat = rest[safe: i]
                 case "--recipe":  i += 1; rule.recipe = rest[safe: i]
                 case "--quality": i += 1; rule.quality = rest[safe: i].flatMap(Int.init)
-                default:          rule.folder = (rest[i] as NSString).expandingTildeInPath
+                default:          rule.folder = URL(fileURLWithPath: (rest[i] as NSString).expandingTildeInPath).standardizedFileURL.path
                 }
                 i += 1
             }

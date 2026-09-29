@@ -33,11 +33,11 @@ enum UpdateInstaller {
         var errorDescription: String? {
             switch self {
             case .notWritable(let path):
-                return "Perch cannot write to \(path). Install it by hand this time."
+                return "Daisy cannot write to \(path). Install it by hand this time."
             case .mountFailed:
                 return "The disk image could not be opened."
             case .noAppInImage:
-                return "The disk image did not contain Perch."
+                return "The disk image did not contain Daisy."
             case .signatureMismatch:
                 return "The downloaded app is not signed by the same key as this one. "
                      + "It was discarded and nothing was changed."

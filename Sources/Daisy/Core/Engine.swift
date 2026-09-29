@@ -66,9 +66,12 @@ enum ConvertError: LocalizedError {
         switch self {
         case .badInput(let m): return m
         case .unsupported(let f, let t): return "No route from \(f.uppercased()) to \(t.uppercased())."
+        case .engineMissing(.libreoffice):
+            return "This needs LibreOffice. Install it from libreoffice.org "
+                 + "(or `brew install --cask libreoffice`), then try again."
         case .engineMissing(let e):
-            return "The \(e.rawValue) engine isn't installed. Run Scripts/bundle-engines.sh, "
-                 + "or `brew install \(Self.formula(for: e))`."
+            return "This needs \(e.rawValue), which isn't installed. "
+                 + "Install it with `brew install \(Self.formula(for: e))`."
         case .rarCreateUnsupported:
             return "Creating RAR archives isn't supported — there's no licensable RAR encoder. Use ZIP or 7z."
         case .processFailed(let c, let m): return "Engine exited \(c): \(m)"

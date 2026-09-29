@@ -299,7 +299,10 @@ private final class WheelHUD: NSView {
 
     override init(frame f: NSRect) {
         super.init(frame: f)
-        registerForDraggedTypes([.fileURL])
+        // File promises are how Photos, Safari, Mail and friends drag images:
+        // no file exists until the drop asks for one.
+        registerForDraggedTypes([.fileURL] + NSFilePromiseReceiver.readableDraggedTypes
+            .map { NSPasteboard.PasteboardType($0) })
         wantsLayer = true
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -573,11 +576,29 @@ private final class WheelHUD: NSView {
 
     // MARK: run
 
+    /// nil = beside the source. A file that only exists in a temp folder — a
+    /// received promise, a screenshot thumbnail — would otherwise have its
+    /// output buried in /var/folders, so those go to Downloads.
+    private var outDir: URL? {
+        let temp = ["/private/var/folders/", "/var/folders/", Self.dropStaging.path + "/"]
+        let buried = !inputs.isEmpty && (inputs + [folderInput].compactMap { $0 }).allSatisfy { u in
+            temp.contains { u.standardizedFileURL.path.hasPrefix($0) }
+        }
+        return buried ? Naming.fallbackDir : nil
+    }
+
+    private static func params(_ preset: ToolPreset?, _ dir: URL?) -> ToolRunner.Params {
+        var p = ToolRunner.Params(preset: preset)
+        p.into = dir
+        return p
+    }
+
     private func runConvert(to target: Format) {
+        let dir = outDir
         // Packing an expanded folder acts on the folder, not on each file in it.
         if let folder = folderInput, target.category == .archive {
             run(count: 1) { report in
-                guard let out = Naming.output(for: folder, target: target, into: nil, collision: .suffix) else {
+                guard let out = Naming.output(for: folder, target: target, into: dir, collision: .suffix) else {
                     throw ConvertError.badInput("Couldn't name the archive.")
                 }
                 let written = try Engine.run(input: folder, to: target, output: out, opts: ConvertOptions())
@@ -591,7 +612,7 @@ private final class WheelHUD: NSView {
         run(count: files.count) { report in
             var first: URL?
             for (i, input) in files.enumerated() {
-                guard let out = Naming.output(for: input, target: target, into: nil, collision: .suffix) else { continue }
+                guard let out = Naming.output(for: input, target: target, into: dir, collision: .suffix) else { continue }
                 let written = try Engine.run(input: input, to: target, output: out, opts: ConvertOptions())
                 if first == nil { first = written }
                 report(i + 1)
@@ -603,27 +624,29 @@ private final class WheelHUD: NSView {
     /// One file out of many. Deliberately the same call the ⌥ Merge PDF tool
     /// makes, so both routes produce identical output and identical naming.
     private func runCombine(to target: Format) {
+        let dir = outDir
         let files = Combine.ordered(inputs)
         combineTarget = nil
         run(count: 1) { report in
-            let outs = try ToolRunner.run(.pdfMerge, inputs: files, params: ToolRunner.Params(preset: nil))
+            let outs = try ToolRunner.run(.pdfMerge, inputs: files, params: Self.params(nil, dir))
             report(1)
             return (outs.first, "\(files.count) → one \(target.label)")
         }
     }
 
     private func runTool(_ tool: Tool, preset: ToolPreset?) {
+        let dir = outDir
         let files = inputs
         let steps = (tool == .pdfMerge || tool == .pdfSplit) ? 1 : files.count
         run(count: steps) { report in
             if tool == .pdfMerge || tool == .pdfSplit {
-                let outs = try ToolRunner.run(tool, inputs: files, params: ToolRunner.Params(preset: preset))
+                let outs = try ToolRunner.run(tool, inputs: files, params: Self.params(preset, dir))
                 report(1)
                 return (outs.first, tool.label)
             }
             var first: URL?
             for (i, input) in files.enumerated() {
-                let outs = try ToolRunner.run(tool, inputs: [input], params: ToolRunner.Params(preset: preset))
+                let outs = try ToolRunner.run(tool, inputs: [input], params: Self.params(preset, dir))
                 if first == nil { first = outs.first }
                 report(i + 1)
             }
@@ -632,11 +655,12 @@ private final class WheelHUD: NSView {
     }
 
     private func runRecipe(_ recipe: Recipe) {
+        let dir = outDir
         let files = inputs
         run(count: files.count) { report in
             var first: URL?
             for (i, input) in files.enumerated() {
-                let out = try RecipeRunner.run(recipe, input: input, into: nil)
+                let out = try RecipeRunner.run(recipe, input: input, into: dir)
                 if first == nil { first = out }
                 report(i + 1)
             }
@@ -1281,7 +1305,9 @@ private final class WheelHUD: NSView {
     override func performDragOperation(_ s: NSDraggingInfo) -> Bool {
         dragActive = false
         dragPoint = nil
-        guard let urls = Self.fileURLs(s.draggingPasteboard), !urls.isEmpty else { return false }
+        guard let urls = Self.fileURLs(s.draggingPasteboard), !urls.isEmpty else {
+            return receivePromises(s)
+        }
         owner?.cancelDragDismiss()
         dragSummoned = false
         accept(urls)
@@ -1301,6 +1327,54 @@ private final class WheelHUD: NSView {
             dragSummoned = false
             owner?.orderOut(nil)
         }
+    }
+
+    static let dropStaging = FileManager.default.temporaryDirectory
+        .appendingPathComponent("daisy-drops", isDirectory: true)
+    private static let promiseQueue: OperationQueue = {
+        let q = OperationQueue()
+        q.qualityOfService = .userInitiated
+        return q
+    }()
+
+    /// Materialise promised files into a staging folder, then load them like
+    /// any other drop. The wheel stays up so a petal can be picked.
+    private func receivePromises(_ s: NSDraggingInfo) -> Bool {
+        guard let receivers = s.draggingPasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self])
+                as? [NSFilePromiseReceiver], !receivers.isEmpty else { return false }
+        owner?.cancelDragDismiss()
+        dragSummoned = false
+        let dest = Self.dropStaging.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try? FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
+
+        let group = DispatchGroup()
+        let lock = NSLock()
+        var got: [URL] = [], failure: String?
+        for r in receivers {
+            // One receiver can carry several files; the reader fires once per file.
+            for _ in r.fileTypes { group.enter() }
+            r.receivePromisedFiles(atDestination: dest, options: [:], operationQueue: Self.promiseQueue) { url, error in
+                lock.lock()
+                if let error { failure = error.localizedDescription } else { got.append(url) }
+                lock.unlock()
+                group.leave()
+            }
+        }
+        // The reader should fire once per promised type, but a source that
+        // under-delivers must not leave the wheel waiting forever.
+        var finished = false
+        let finish: () -> Void = { [weak self] in
+            guard let self, !finished else { return }
+            finished = true
+            lock.lock(); let got = got, failure = failure; lock.unlock()
+            self.window?.makeKeyAndOrderFront(nil)
+            self.window?.makeFirstResponder(self)
+            if got.isEmpty { self.showError(failure ?? "Nothing arrived from that drag."); return }
+            self.accept(got)
+        }
+        group.notify(queue: .main, execute: finish)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30, execute: finish)
+        return true
     }
 
     private static func fileURLs(_ pb: NSPasteboard) -> [URL]? {

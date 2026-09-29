@@ -71,7 +71,22 @@ struct DocConverter: Converter {
 
     private func pandoc(_ input: URL, to output: URL) throws {
         guard let bin = EngineLocator.path(for: .pandoc) else { throw ConvertError.engineMissing(.pandoc) }
-        let r = ProcessRun.run(bin, [input.path, "-o", output.path], timeout: 120)
+        // pandoc guesses the writer from the extension, and guesses badly for
+        // two of ours: .txt means markdown to it, and .md means pandoc's own
+        // dialect, full of ::: fenced divs. RTF and HTML without -s are
+        // fragments — no {\rtf1 header, no <html> — that nothing else opens.
+        var a = [input.path, "-o", output.path]
+        switch output.pathExtension.lowercased() {
+        case "txt":  a += ["-t", "plain"]
+        case "md":   a += ["-t", "gfm"]
+        case "rtf", "html": a += ["-s"]
+        default: break
+        }
+        if output.pathExtension.lowercased() == "html" || output.pathExtension.lowercased() == "epub" {
+            // Standalone HTML/EPUB warn and fall back without a title.
+            a += ["--metadata", "pagetitle=\(Naming.strippedStem(of: input))"]
+        }
+        let r = ProcessRun.run(bin, a, cwd: FileManager.default.temporaryDirectory, timeout: 120)
         if r.code != 0 {
             throw ConvertError.processFailed(code: r.code, message: String((r.stderr.isEmpty ? r.stdout : r.stderr).suffix(500)))
         }

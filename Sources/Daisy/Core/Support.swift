@@ -20,7 +20,7 @@ enum Support {
     static func saveJSON<T: Encodable>(_ value: T, to name: String) {
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-        if let data = try? enc.encode(value) { try? data.write(to: file(name)) }
+        if let data = try? enc.encode(value) { try? data.write(to: file(name), options: .atomic) }
     }
 }
 
