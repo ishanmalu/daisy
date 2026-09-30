@@ -240,11 +240,14 @@ enum SelfTest {
                "an unknown host is refused")
         expect(!Updater.isTrusted(URL(string: "https://github.com.evil.example/x.dmg")!),
                "a lookalike host is refused")
-        // Ad-hoc builds pin their own code hash, so they can never accept an
-        // update in place. That is the right answer, and worth asserting.
-        expect(!UpdateInstaller.probeRequirement(Bundle.main.bundleURL)
-               || UpdateInstaller.canInstallInPlace,
-               "in-place install is only ever offered when the signature matches")
+        // In-place install is only offered where the bundle can be replaced.
+        // (Run from a mounted DMG this is rightly false; the old assertion
+        // failed there even though the updater was behaving correctly.)
+        let home = Bundle.main.bundleURL
+        let writable = FileManager.default.isWritableFile(atPath: home.deletingLastPathComponent().path)
+            && FileManager.default.isWritableFile(atPath: home.path)
+        expect(UpdateInstaller.canInstallInPlace == (home.pathExtension == "app" && writable),
+               "in-place install is offered exactly when the bundle is replaceable")
 
         section("menu bar")
         let delegate = AppDelegate()
