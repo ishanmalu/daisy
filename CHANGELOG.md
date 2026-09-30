@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.10.0
+
+- **Fixed: every SVG conversion failed with "Read-only file system".** Daisy
+  passed the SVG renderer a flag it doesn't have, so it tried to write a file
+  called `-o` into `/`. SVG → JPG, WebP, HEIC and the rest also came out as
+  PNG data under the wrong name; they now go through a real PNG step.
+- **Fixed: watch folders crashed Daisy** the moment a file landed in one. They
+  also ran Daisy's own output back through the rule forever, never matched a
+  folder reached through a symlink or added as `.`, overwrote earlier
+  originals in `_processed`, and picked up large copies before they finished.
+- **Read-only sources** — a mounted disk image, a network share, an app's
+  container — now convert into Downloads instead of failing.
+- **Drag photos straight out of Photos, Safari or Mail.** Those apps hand over
+  a promise rather than a file, and the wheel used to ignore them.
+- **Documents to PDF without LibreOffice.** Markdown, Word, ODT, RTF, text,
+  HTML and EPUB render with macOS's own text engine. LibreOffice is still used
+  when it's installed, and slides and spreadsheets still need it.
+- **Animated GIFs keep their animation** through resize, crop, compress and
+  strip metadata, instead of flattening to the first frame.
+- Resize, crop and compress work on **WebP**.
+- Fixed silent failures and wrong output:
+  - Resizing a grayscale or CMYK image did nothing.
+  - Transparent images saved as JPG came out with black backgrounds.
+  - Screen recordings with odd dimensions wouldn't encode.
+  - Tools produced broken `.webm` files.
+  - **→ OGG** always failed with current ffmpeg.
+  - **→ TXT** gave Markdown, and **→ RTF** gave a headerless file Word couldn't open.
+- Shift-drag only summons the wheel for drags that carry files.
+- Update downloads show real progress, and checking the download no longer
+  freezes the menu bar. Error messages say what to install, in plain terms.
+
 ## 0.9.0
 
 - **Several files into one PDF.** Drop three photos, pick PDF, and Daisy now
