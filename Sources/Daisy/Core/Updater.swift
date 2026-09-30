@@ -148,12 +148,19 @@ final class Updater {
 
         Task {
             do {
-                let (tempURL, response) = try await URLSession.shared.download(from: dmgURL)
+                let (tempURL, response) = try await Self.download(dmgURL) { [weak self] p in
+                    Task { @MainActor in
+                        if case .downloading = self?.state { self?.state = .downloading(p) }
+                    }
+                }
                 guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                     throw Failure.badResponse
                 }
-                let data = try Data(contentsOf: tempURL)
-                let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+                // Hash off the main actor, streamed: a DMG is tens of MB and
+                // reading it whole here froze the menu bar.
+                let digest = try await Task.detached(priority: .userInitiated) {
+                    try Self.sha256(of: tempURL)
+                }.value
 
                 // A release without a published checksum is refused rather than
                 // trusted: it is the only thing standing between this download
@@ -201,6 +208,34 @@ final class Updater {
         catch { state = .failed(error.localizedDescription); return }
         NSWorkspace.shared.activateFileViewerSelecting([destination])
         state = .revealed(note ?? "Verified. Open it and drag Daisy to Applications.")
+    }
+
+    nonisolated private static func sha256(of url: URL) throws -> String {
+        let fh = try FileHandle(forReadingFrom: url)
+        defer { try? fh.close() }
+        var hasher = SHA256()
+        while let chunk = try fh.read(upToCount: 1 << 20), !chunk.isEmpty { hasher.update(data: chunk) }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// `URLSession.download(from:)` reports no progress, so the state sat at
+    /// 0% for the whole download. Watch the task's own Progress instead.
+    nonisolated private static func download(_ url: URL,
+                                             progress: @escaping @Sendable (Double) -> Void) async throws -> (URL, URLResponse) {
+        try await withCheckedThrowingContinuation { cont in
+            var watch: NSKeyValueObservation?
+            let task = URLSession.shared.downloadTask(with: url) { temp, response, error in
+                watch?.invalidate()
+                guard let temp, let response else { cont.resume(throwing: error ?? Failure.badResponse); return }
+                // The system deletes `temp` when this handler returns.
+                let keep = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("daisy-dl-\(UUID().uuidString).dmg")
+                do { try FileManager.default.moveItem(at: temp, to: keep); cont.resume(returning: (keep, response)) }
+                catch { cont.resume(throwing: error) }
+            }
+            watch = task.progress.observe(\.fractionCompleted) { p, _ in progress(p.fractionCompleted) }
+            task.resume()
+        }
     }
 
     private func expectedChecksum(from url: URL, named dmg: String) async throws -> String? {

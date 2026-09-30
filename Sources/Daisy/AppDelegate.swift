@@ -4,6 +4,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Files received from promise drags last run; nothing refers to them now.
+        try? FileManager.default.removeItem(at: DropPanel.dropStaging)
         Presets.seedFileIfMissing()
         Recipes.seedFileIfMissing()
         WatchFolders.shared.load()

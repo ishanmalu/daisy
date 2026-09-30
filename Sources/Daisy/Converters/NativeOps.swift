@@ -163,8 +163,23 @@ enum NativeOps {
 
     static func editImage(_ input: URL, to output: URL, tool: Tool, params: ToolRunner.Params) throws {
         let id = Formats.byURL(output)?.id ?? output.pathExtension.lowercased()
+        if id == "gif", let src = CGImageSourceCreateWithURL(input as CFURL, nil),
+           CGImageSourceGetCount(src) > 1 {
+            try editAnimatedGIF(src, to: output, tool: tool, params: params)
+            return
+        }
         var (image, props) = try loadUpright(input)
 
+        image = try transformed(image, tool: tool, params: params)
+
+        let q = tool == .compress ? (params.quality ?? 60) : (tool == .stripMetadata ? nil : params.quality)
+        try writeCGImage(image, to: output, id: id, quality: q,
+                         keep: tool == .stripMetadata ? nil : props)
+    }
+
+    /// Resize / crop geometry, shared by stills and every frame of a GIF.
+    private static func transformed(_ source: CGImage, tool: Tool, params: ToolRunner.Params) throws -> CGImage {
+        var image = source
         switch tool {
         case .resize:
             let (w, h): (Int, Int)
@@ -188,14 +203,37 @@ enum NativeOps {
             image = image.cropping(to: rect) ?? image
 
         case .compress, .stripMetadata:
-            break   // re-encode below; AddImage drops source metadata on its own
+            break   // re-encode only; AddImage drops source metadata on its own
         default:
             throw ConvertError.badInput("\(tool.label) doesn't apply to images.")
         }
+        return image
+    }
 
-        let q = tool == .compress ? (params.quality ?? 60) : (tool == .stripMetadata ? nil : params.quality)
-        try writeCGImage(image, to: output, id: id, quality: q,
-                         keep: tool == .stripMetadata ? nil : props)
+    /// Every frame through the same transform, keeping delays and looping.
+    /// Going through `loadUpright` kept only frame 0 — a resized animation
+    /// came out as a still.
+    private static func editAnimatedGIF(_ src: CGImageSource, to output: URL,
+                                        tool: Tool, params: ToolRunner.Params) throws {
+        let n = CGImageSourceGetCount(src)
+        guard let dest = CGImageDestinationCreateWithURL(output as CFURL, UTType.gif.identifier as CFString, n, nil) else {
+            throw ConvertError.badInput("Couldn't create \(output.lastPathComponent)")
+        }
+        let fileProps = (CGImageSourceCopyProperties(src, nil) as? [CFString: Any]) ?? [:]
+        let loop = (fileProps[kCGImagePropertyGIFDictionary] as? [CFString: Any])?[kCGImagePropertyGIFLoopCount] ?? 0
+        CGImageDestinationSetProperties(dest, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: loop]] as CFDictionary)
+        for i in 0..<n {
+            guard let frame = CGImageSourceCreateImageAtIndex(src, i, nil) else { continue }
+            let props = (CGImageSourceCopyPropertiesAtIndex(src, i, nil) as? [CFString: Any]) ?? [:]
+            let gif = (props[kCGImagePropertyGIFDictionary] as? [CFString: Any]) ?? [:]
+            var keep: [CFString: Any] = [:]
+            for k in [kCGImagePropertyGIFDelayTime, kCGImagePropertyGIFUnclampedDelayTime] { keep[k] = gif[k] }
+            CGImageDestinationAddImage(dest, try transformed(frame, tool: tool, params: params),
+                                       [kCGImagePropertyGIFDictionary: keep] as CFDictionary)
+        }
+        guard CGImageDestinationFinalize(dest) else {
+            throw ConvertError.badInput("Failed to write \(output.lastPathComponent)")
+        }
     }
 
     private static func aspectPair(_ s: String) -> (Int, Int) {

@@ -14,6 +14,11 @@ final class DropPanel: NSPanel {
     /// clipped flat against the window edge.
     static let side: CGFloat = 360
 
+    /// Where promised files from Photos / Safari / Mail drops are received.
+    /// Cleared at launch.
+    static let dropStaging = FileManager.default.temporaryDirectory
+        .appendingPathComponent("daisy-drops", isDirectory: true)
+
     private init() {
         super.init(contentRect: NSRect(x: 0, y: 0, width: Self.side, height: Self.side),
                    styleMask: [.borderless, .nonactivatingPanel],
@@ -580,7 +585,7 @@ private final class WheelHUD: NSView {
     /// received promise, a screenshot thumbnail — would otherwise have its
     /// output buried in /var/folders, so those go to Downloads.
     private var outDir: URL? {
-        let temp = ["/private/var/folders/", "/var/folders/", Self.dropStaging.path + "/"]
+        let temp = ["/private/var/folders/", "/var/folders/", DropPanel.dropStaging.path + "/"]
         let buried = !inputs.isEmpty && (inputs + [folderInput].compactMap { $0 }).allSatisfy { u in
             temp.contains { u.standardizedFileURL.path.hasPrefix($0) }
         }
@@ -1329,8 +1334,6 @@ private final class WheelHUD: NSView {
         }
     }
 
-    static let dropStaging = FileManager.default.temporaryDirectory
-        .appendingPathComponent("daisy-drops", isDirectory: true)
     private static let promiseQueue: OperationQueue = {
         let q = OperationQueue()
         q.qualityOfService = .userInitiated
@@ -1344,7 +1347,7 @@ private final class WheelHUD: NSView {
                 as? [NSFilePromiseReceiver], !receivers.isEmpty else { return false }
         owner?.cancelDragDismiss()
         dragSummoned = false
-        let dest = Self.dropStaging.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let dest = DropPanel.dropStaging.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try? FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
 
         let group = DispatchGroup()

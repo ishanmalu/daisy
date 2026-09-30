@@ -1,5 +1,6 @@
 import Foundation
 import PDFKit
+import AppKit
 
 /// Documents. pandoc covers the text formats and Office round-trips it knows;
 /// LibreOffice (bring-your-own) does high-fidelity Office ↔ PDF. PDF → text is
@@ -46,6 +47,12 @@ struct DocConverter: Converter {
 
         // Anything → PDF.
         if to.id == "pdf" {
+            // Without LibreOffice, text documents still render through the
+            // system's own text engine. Slides and spreadsheets can't.
+            if EngineLocator.libreOffice() == nil, !Self.needsOffice.contains(from.id) {
+                try nativePDF(input, from: from, to: output)
+                return true
+            }
             if Self.office.contains(from.id) || from.id == "html" || from.id == "txt" || from.id == "rtf" {
                 try soffice(input, toExt: "pdf", filter: nil, finalOutput: output)
             } else {
@@ -61,6 +68,71 @@ struct DocConverter: Converter {
         // Text ↔ text / Office (pandoc's wheelhouse).
         try pandoc(input, to: output)
         return true
+    }
+
+    static let needsOffice: Set<String> = ["pptx", "xlsx", "odp", "ods"]
+
+    // MARK: native PDF
+
+    /// Document → attributed string → paginated PDF via AppKit's print
+    /// system. HTML import and NSTextView both need the main thread.
+    private func nativePDF(_ input: URL, from: Format, to output: URL) throws {
+        // Formats AppKit can't read go through pandoc to HTML first.
+        var source = input, docType: NSAttributedString.DocumentType
+        var mid: URL?
+        defer { mid.map { try? FileManager.default.removeItem(at: $0) } }
+        switch from.id {
+        case "txt":  docType = .plain
+        case "rtf":  docType = .rtf
+        case "docx": docType = .officeOpenXML
+        case "odt":  docType = .openDocument
+        case "html": docType = .html
+        default:
+            let html = tmp("html")
+            try pandoc(input, to: html)
+            mid = html; source = html; docType = .html
+        }
+        let data = try Data(contentsOf: source)
+
+        var failure: Error?
+        let work = {
+            do {
+                let text = try NSAttributedString(
+                    data: data,
+                    options: [.documentType: docType, .characterEncoding: String.Encoding.utf8.rawValue],
+                    documentAttributes: nil)
+                try Self.printPDF(text, to: output)
+            } catch { failure = error }
+        }
+        Thread.isMainThread ? work() : DispatchQueue.main.sync(execute: work)
+        if let failure { throw failure }
+    }
+
+    private static func printPDF(_ text: NSAttributedString, to output: URL) throws {
+        let info = NSPrintInfo()
+        info.paperSize = NSSize(width: 612, height: 792)          // US Letter
+        for side in [\NSPrintInfo.topMargin, \.bottomMargin, \.leftMargin, \.rightMargin] {
+            info[keyPath: side] = 54
+        }
+        info.horizontalPagination = .fit
+        info.verticalPagination = .automatic
+        info.isVerticallyCentered = false
+        info.jobDisposition = .save
+        info.dictionary()[NSPrintInfo.AttributeKey.jobSavingURL] = output
+
+        let width = info.paperSize.width - info.leftMargin - info.rightMargin
+        let view = NSTextView(frame: NSRect(x: 0, y: 0, width: width, height: 1))
+        view.textStorage?.setAttributedString(text)
+        view.isVerticallyResizable = true
+        view.textContainer?.widthTracksTextView = true
+        view.sizeToFit()
+
+        let op = NSPrintOperation(view: view, printInfo: info)
+        op.showsPrintPanel = false
+        op.showsProgressPanel = false
+        guard op.run(), FileManager.default.fileExists(atPath: output.path) else {
+            throw ConvertError.badInput("Couldn't render \(output.lastPathComponent).")
+        }
     }
 
     // MARK: engines

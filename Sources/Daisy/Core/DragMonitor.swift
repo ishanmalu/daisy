@@ -8,10 +8,16 @@ final class DragMonitor {
 
     private var handles: [Any] = []
     private var summoning = false
+    /// Drag pasteboard generation at mouse-down. A real drag session writes
+    /// to it; moving a window or selecting text doesn't.
+    private var baseline = NSPasteboard(name: .drag).changeCount
+    private var dragEvents = 0
+    private static let fileTypes: Set<NSPasteboard.PasteboardType> = Set(
+        [.fileURL] + NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) })
 
     func start() {
         guard handles.isEmpty else { return }
-        let mask: NSEvent.EventTypeMask = [.leftMouseDragged, .leftMouseUp]
+        let mask: NSEvent.EventTypeMask = [.leftMouseDown, .leftMouseDragged, .leftMouseUp]
         if let g = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: { [weak self] in self?.handle($0) }) {
             handles.append(g)
         }
@@ -22,12 +28,26 @@ final class DragMonitor {
 
     private func handle(_ e: NSEvent) {
         switch e.type {
+        case .leftMouseDown:
+            baseline = NSPasteboard(name: .drag).changeCount
+            dragEvents = 0
+
         case .leftMouseDragged:
-            // A background process can't read the drag pasteboard, so we can't
-            // tell yet whether files are being dragged. Put the wheel up in the
-            // middle; it reads the drag once that enters the window, and
-            // dismisses itself if nothing does.
+            // Only a Shift-drag of files. Checked on every drag event because
+            // the source writes the pasteboard a few events into the drag.
+            // Reading the types, not the contents, needs no permission.
             guard !summoning, NSEvent.modifierFlags.contains(.shift) else { return }
+            dragEvents += 1
+            let pb = NSPasteboard(name: .drag)
+            if pb.changeCount != baseline {
+                // A drag session started: summon only if it carries files.
+                guard !Self.fileTypes.isDisjoint(with: pb.types ?? []) else { return }
+            } else {
+                // No session visible (a window move, or the pasteboard isn't
+                // readable from here). Fail open to the old behaviour, a few
+                // events in so a session has had time to show up.
+                guard dragEvents >= 6 else { return }
+            }
             summoning = true
             DispatchQueue.main.async { DropPanel.shared.beginDrop() }
 
